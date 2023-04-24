@@ -1,3 +1,7 @@
+# i hate the way this dockerfile has been made; the original basically does not work on anything other than intended architecture and it is incredibly difficult to modify and distribute without the WHOLE pufferpanel repo
+
+# don't use this image alone, use the tarball found in the same dir (good god even that doesn't work, just perhaps avoid for now)
+
 ###
 # Builder container
 ###
@@ -9,7 +13,6 @@ COPY --from=node /usr/local/share /usr/local/share
 COPY --from=node /usr/local/lib /usr/local/lib
 COPY --from=node /usr/local/include /usr/local/include
 COPY --from=node /usr/local/bin /usr/local/bin
-
 
 ARG tags=none
 ARG version=devel
@@ -23,27 +26,28 @@ ENV CGOENABLED=1
 ENV npm_config_registry=$npmproxy
 ENV GOPROXY=$goproxy
 
-RUN go version && \
+RUN /bin/sh -c "go version && \
     apk add --update --no-cache gcc musl-dev git curl make gcc g++ && \
     mkdir /pufferpanel && \
-    wget https://github.com/swaggo/swag/releases/download/v${swagversion}/swag_${swagversion}_Linux_x86_64.tar.gz && \
+    wget https://github.com/swaggo/swag/releases/download/v${swagversion}/swag_${swagversion}_Linux_aarch64.tar.gz && \
     mkdir -p ~/go/bin && \
     tar -zxf swag*.tar.gz -C ~/go/bin && \
-    rm -rf swag*.tar.gz
+    rm -rf swag*.tar.gz"
 
-WORKDIR /build/pufferpanel
+WORKDIR /build
 
 COPY go.mod go.sum ./
-RUN go mod download && go mod verify
+RUN /bin/sh -c "go mod download && go mod verify"
 
-COPY . .
-RUN ~/go/bin/swag init -o web/swagger -g web/loader.go && \
-    go build -v -buildvcs=false -tags $tags -ldflags "-X 'github.com/pufferpanel/pufferpanel/v2.Hash=$sha' -X 'github.com/pufferpanel/pufferpanel/v2.Version=$version'" -o /pufferpanel/pufferpanel github.com/pufferpanel/pufferpanel/v2/cmd && \
-    mv assets/email /pufferpanel/email && \
+RUN /bin/sh -c "~/go/bin/swag init -o web/swagger -g web/loader.go"
+RUN /bin/sh -c "go build -v -buildvcs=false -ldflags \"-X 'github.com/pufferpanel/pufferpanel/v2.Hash=$sha' -X 'github.com/pufferpanel/pufferpanel/v2.Version=$version'\" -o /pufferpanel/pufferpanel github.com/pufferpanel/pufferpanel/v2/cmd"
+
+RUN /bin/sh -c "mv assets/email /pufferpanel/email && \
     cd client && \
     npm install && \
     npm run build && \
-    mv dist /pufferpanel/www/
+    mv dist /pufferpanel/www/"
+
 
 ###
 # Generate final image
@@ -53,8 +57,9 @@ FROM alpine
 COPY --from=builder /pufferpanel /pufferpanel
 
 EXPOSE 8080 5657
-RUN mkdir -p /etc/pufferpanel && \
-    mkdir -p /var/lib/pufferpanel
+
+RUN /bin/sh -c "mkdir -p /etc/pufferpanel && \
+    mkdir -p /var/lib/pufferpanel"
 
 ENV PUFFER_LOGS=/etc/pufferpanel/logs \
     PUFFER_PANEL_TOKEN_PUBLIC=/etc/pufferpanel/public.pem \
@@ -67,6 +72,28 @@ ENV PUFFER_LOGS=/etc/pufferpanel/logs \
     PUFFER_DAEMON_DATA_MODULES=/var/lib/pufferpanel/modules \
     PUFFER_DAEMON_DATA_BINARIES=/var/lib/pufferpanel/binaries \
     GIN_MODE=release
+
+ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk
+
+RUN /bin/sh -c "echo 'https://dl-cdn.alpinelinux.org/alpine/edge/community' >> /etc/apk/repositories && \
+    apk update"
+
+RUN /bin/sh -c "apk add --no-cache openjdk17 && \
+    ln -sfn /usr/lib/jvm/java-17-openjdk/bin/java /usr/bin/java && \
+    ln -sfn /usr/lib/jvm/java-17-openjdk/bin/javac /usr/bin/javac && \
+    ln -sfn /usr/lib/jvm/java-17-openjdk/bin/java /usr/bin/java17 && \
+    ln -sfn /usr/lib/jvm/java-17-openjdk/bin/javac /usr/bin/javac17 && \
+    echo 'Testing Javac 17 path' && \
+    javac17 -version && \
+    echo 'Testing Java 17 path' && \
+    java17 -version && \
+    echo 'Testing java path' && \
+    java -version && \
+    echo 'Testing javac path' && \
+    javac -version"
+
+# Cleanup
+RUN /bin/sh -c "rm -rf /var/cache/apk/*"
 
 WORKDIR /pufferpanel
 
